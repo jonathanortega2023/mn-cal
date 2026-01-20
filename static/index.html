@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Midnight Venue Availability</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1 id="venue-title">Midnight Venue Availability</h1>
+        <a class="venue-switch" id="venue-switch-link" href="/garden">Looking for <span id="other-venue-name">Garden</span>? Click here</a>
+
+        <div class="year-nav">
+            <button id="prev-year" aria-label="Previous year">&larr;</button>
+            <span id="current-year">Loading...</span>
+            <button id="next-year" aria-label="Next year">&rarr;</button>
+        </div>
+
+        <div id="calendar"></div>
+
+        <div class="footer">
+            <p>Last updated: <span id="last-updated">Loading...</span></p>
+        </div>
+    </div>
+
+    <script>
+        const monthNames = [
+            'January', 'February', 'March', 'April', 'May', 'June',
+            'July', 'August', 'September', 'October', 'November', 'December'
+        ];
+
+        // Get venue from URL path, fallback to garden
+        const venue = window.location.pathname.replace(/^\//, '') || 'garden';
+        let currentYear = new Date().getFullYear();
+        let minYear = currentYear;
+        let maxYear = currentYear + 3;
+
+        const venueName = venue.charAt(0).toUpperCase() + venue.slice(1);
+        document.getElementById('venue-title').textContent = `Midnight ${venueName} Availability`;
+        document.title = `Midnight ${venueName} Availability`;
+
+        const otherVenue = venue === 'garden' ? 'ballroom' : 'garden';
+        const otherVenueName = otherVenue.charAt(0).toUpperCase() + otherVenue.slice(1);
+        document.getElementById('other-venue-name').textContent = otherVenueName;
+        document.getElementById('venue-switch-link').href = `/${otherVenue}`;
+
+        function formatDate(dateStr) {
+            const d = new Date(dateStr + 'T00:00:00');
+            return d.getDate();
+        }
+
+        function getMonthYear(dateStr) {
+            const d = new Date(dateStr + 'T00:00:00');
+            return `${monthNames[d.getMonth()]} ${d.getFullYear()}`;
+        }
+
+        function updateNavButtons() {
+            document.getElementById('prev-year').disabled = currentYear <= minYear;
+            document.getElementById('next-year').disabled = currentYear >= maxYear;
+            document.getElementById('current-year').textContent = currentYear;
+        }
+
+        function renderCalendar(data) {
+            const calendar = document.getElementById('calendar');
+            calendar.innerHTML = '';
+
+            // Update year bounds from API
+            minYear = data.minYear;
+            maxYear = data.maxYear;
+            updateNavButtons();
+
+            // Group days by month
+            const monthGroups = {};
+
+            data.days.forEach(day => {
+                const monthKey = getMonthYear(day.date);
+                if (!monthGroups[monthKey]) {
+                    monthGroups[monthKey] = [];
+                }
+                monthGroups[monthKey].push(day);
+            });
+
+            // Render each month
+            for (const [month, days] of Object.entries(monthGroups)) {
+                const monthSection = document.createElement('div');
+                monthSection.className = 'month-section';
+
+                const monthHeader = document.createElement('h2');
+                monthHeader.className = 'month-header';
+                monthHeader.textContent = month;
+                monthSection.appendChild(monthHeader);
+
+                const weekendGrid = document.createElement('div');
+                weekendGrid.className = 'weekend-grid';
+
+                const headerRow = document.createElement('div');
+                headerRow.className = 'weekend-row header-row';
+                headerRow.innerHTML = '<span>Fri</span><span>Sat</span><span>Sun</span>';
+                weekendGrid.appendChild(headerRow);
+
+                // Group days into rows (Fri-Sat-Sun sequences)
+                let currentRow = null;
+
+                days.forEach(day => {
+                    // Start a new row if this is a Friday, or if we need to
+                    if (day.day === 'friday' || currentRow === null) {
+                        if (currentRow) {
+                            // Fill remaining empty cells in previous row
+                            while (currentRow.children.length < 3) {
+                                const emptyCell = document.createElement('span');
+                                emptyCell.className = 'day-cell empty';
+                                currentRow.appendChild(emptyCell);
+                            }
+                            weekendGrid.appendChild(currentRow);
+                        }
+                        currentRow = document.createElement('div');
+                        currentRow.className = 'weekend-row';
+
+                        // Add leading empty cells if not starting on Friday
+                        if (day.day === 'saturday') {
+                            const emptyCell = document.createElement('span');
+                            emptyCell.className = 'day-cell empty';
+                            currentRow.appendChild(emptyCell);
+                        } else if (day.day === 'sunday') {
+                            for (let i = 0; i < 2; i++) {
+                                const emptyCell = document.createElement('span');
+                                emptyCell.className = 'day-cell empty';
+                                currentRow.appendChild(emptyCell);
+                            }
+                        }
+                    }
+
+                    const cell = document.createElement('span');
+                    cell.className = `day-cell ${day.available ? 'available' : 'booked'}`;
+                    cell.textContent = formatDate(day.date);
+                    cell.title = `${day.date} - ${day.available ? 'Available' : 'Booked'}`;
+                    currentRow.appendChild(cell);
+                });
+
+                // Append last row if exists
+                if (currentRow) {
+                    // Fill remaining empty cells
+                    while (currentRow.children.length < 3) {
+                        const emptyCell = document.createElement('span');
+                        emptyCell.className = 'day-cell empty';
+                        currentRow.appendChild(emptyCell);
+                    }
+                    weekendGrid.appendChild(currentRow);
+                }
+
+                monthSection.appendChild(weekendGrid);
+                calendar.appendChild(monthSection);
+            }
+
+            if (data.lastUpdated) {
+                const lastUpdated = new Date(data.lastUpdated);
+                document.getElementById('last-updated').textContent = lastUpdated.toLocaleString();
+            }
+        }
+
+        async function loadAvailability() {
+            try {
+                const response = await fetch(`/api/availability/${venue}?year=${currentYear}`);
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                const data = await response.json();
+                renderCalendar(data);
+            } catch (error) {
+                console.error('Failed to load availability:', error);
+                document.getElementById('calendar').innerHTML =
+                    '<p class="error">Failed to load calendar data. Please try again later.</p>';
+            }
+        }
+
+        // Year navigation
+        document.getElementById('prev-year').addEventListener('click', () => {
+            if (currentYear > minYear) {
+                currentYear--;
+                loadAvailability();
+            }
+        });
+
+        document.getElementById('next-year').addEventListener('click', () => {
+            if (currentYear < maxYear) {
+                currentYear++;
+                loadAvailability();
+            }
+        });
+
+        loadAvailability();
+
+        // Refresh every 5 minutes
+        setInterval(loadAvailability, 5 * 60 * 1000);
+    </script>
+</body>
+</html>
